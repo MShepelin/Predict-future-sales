@@ -26,8 +26,8 @@ def clear_records(dataset: pd.DataFrame, test_dataset: pd.DataFrame, shops, item
         shops.drop(pair[0], inplace=True)
 
     dataset['shop_id'] = pd.Categorical(dataset['shop_id'], categories=shops.index)
-    dataset['item_id'] = pd.Categorical(dataset['shop_id'], categories=items.index)
-    dataset['item_category_id'] = pd.Categorical(dataset['shop_id'], categories=item_categories.index)
+    dataset['item_id'] = pd.Categorical(dataset['item_id'], categories=items.index)
+    dataset['item_category_id'] = pd.Categorical(dataset['item_category_id'], categories=item_categories.index)
 
     # Outliers
     dataset['item_cnt_day'] = dataset['item_cnt_day'].apply(abs)
@@ -76,16 +76,32 @@ def generate_zero_sales(dataset, sample_size=10):
 
 def group_records(dataset):
     # Calculate revenue
+    data_grouped = dataset.drop('item_category_id', axis=1)
+    
     data_grouped = dataset.drop('item_category_id', axis=1).append(pd.DataFrame(generate_zero_sales(dataset),
-        columns=['date_block_num', 'shop_id', 'item_id', 'item_price', 'item_cnt_day']))
+                                                                                columns=['date_block_num', 'shop_id',
+                                                                                         'item_id', 'item_price',
+                                                                                         'item_cnt_day'],
+                                                                                ), ignore_index=True)
+
+    return data_grouped
+
     data_grouped['revenue'] = (data_grouped['item_price'] * data_grouped['item_cnt_day']).astype('int32')
+    print(data_grouped.shape)
+
     data_grouped.drop('item_price', axis=1, inplace=True)
+    print(data_grouped.shape)
 
     # Sum up day sales for each month
     data_grouped = data_grouped.groupby(['date_block_num', 'shop_id', 'item_id'])[
-        ['item_cnt_day', 'revenue']].sum().reset_index().astype('float32')
+        ['item_cnt_day', 'revenue']].sum().reset_index()
+    print(data_grouped.shape)
+
     data_grouped.rename(columns={'item_cnt_day': 'target'}, inplace=True)
+
+    print(data_grouped.shape)
     data_grouped['target'].clip(0, 20, inplace=True)
+    print(data_grouped.shape)
 
     print("Records collected by month...")
 
@@ -207,9 +223,9 @@ def validation_preparation(full, train_mask, story_len, to_join, join=True):
     n_sales(full, story_len)
 
     numerical_columns = ['shop_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-                        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-                        'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-                        'target_lag_{}'.format(i) for i in [1, 2, 4, 8]]
+        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
+                            'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
+                            'target_lag_{}'.format(i) for i in [1, 2, 4, 8]]
 
     functions = {
         '_square': lambda x: x * x,
