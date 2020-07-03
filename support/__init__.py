@@ -31,13 +31,13 @@ def clear_records(dataset: pd.DataFrame, test_dataset: pd.DataFrame, shops, item
 
     # Outliers
     dataset['item_cnt_day'] = dataset['item_cnt_day'].apply(abs)
-    dataset = dataset[(dataset['item_price'] > 0) & (dataset['item_cnt_day'] <= 700)]
+    dataset = dataset[(dataset['item_price'] > 0) & (dataset['item_cnt_day'] <= 100)]
 
-    whis = 1.5
+    whis = 1
     IQR = dataset['item_price'].quantile(0.75) - dataset['item_price'].quantile(0.25)
     outliers = dataset[dataset['item_price'] > dataset['item_price'].quantile(0.75) + IQR * whis]
     outliers = outliers[(outliers['item_id'].isin(test_dataset['item_id'].unique()) == False) &
-                        (outliers['item_price'] >= 45000)]
+                        (outliers['item_price'] >= 10000)]
 
     print("Records are clear...")
 
@@ -57,7 +57,7 @@ def get_prices_means(dataset: pd.DataFrame):
     return item_mean_prices, shop_mean_prices, cat_mean_prices
 
 
-def generate_zero_sales(dataset, sample_size=10):
+def generate_zero_sales(dataset, sample_size=512):
     print("Generating zero sales...")
 
     unique_shops = dataset['shop_id'].unique()
@@ -66,8 +66,15 @@ def generate_zero_sales(dataset, sample_size=10):
 
     for shop_id in unique_shops:
         for date_block_num in range(dataset['date_block_num'].max() + 1):
+            temp_items = dataset[(dataset['date_block_num'] == date_block_num) & (dataset['date_block_num'] == shop_id)
+                                 ]['item_id'].unique()
+            count = 0
             for item in np.random.choice(unique_items, sample_size, replace=False):
-                zeroes_addiction.append([date_block_num, shop_id, item, 0, 0])
+                if item not in temp_items:
+                    count += 1
+                    zeroes_addiction.append([date_block_num, shop_id, item, 0, 0])
+                    if count > sample_size:
+                        break
 
     print("Zero sales generated...")
 
@@ -76,32 +83,23 @@ def generate_zero_sales(dataset, sample_size=10):
 
 def group_records(dataset):
     # Calculate revenue
-    data_grouped = dataset.drop('item_category_id', axis=1)
-    
     data_grouped = dataset.drop('item_category_id', axis=1).append(pd.DataFrame(generate_zero_sales(dataset),
                                                                                 columns=['date_block_num', 'shop_id',
                                                                                          'item_id', 'item_price',
                                                                                          'item_cnt_day'],
                                                                                 ), ignore_index=True)
 
-    return data_grouped
-
     data_grouped['revenue'] = (data_grouped['item_price'] * data_grouped['item_cnt_day']).astype('int32')
-    print(data_grouped.shape)
 
     data_grouped.drop('item_price', axis=1, inplace=True)
-    print(data_grouped.shape)
 
     # Sum up day sales for each month
     data_grouped = data_grouped.groupby(['date_block_num', 'shop_id', 'item_id'])[
         ['item_cnt_day', 'revenue']].sum().reset_index()
-    print(data_grouped.shape)
 
     data_grouped.rename(columns={'item_cnt_day': 'target'}, inplace=True)
 
-    print(data_grouped.shape)
     data_grouped['target'].clip(0, 20, inplace=True)
-    print(data_grouped.shape)
 
     print("Records collected by month...")
 
@@ -124,8 +122,8 @@ def lag_features(full, train_mask, story_len, lag_columns, index_columns=['date_
     print("Calculating time-based features...")
 
     # Cycle through length
-    for k in tqdm(range(1, story_len + 1)):
-        gr_copy = full[lag_columns + index_columns].copy()
+    for k in tqdm([1, 2, 3, 4, 6, 12]):
+        gr_copy = (full[full['date_block_num'] < train_mask])[lag_columns + index_columns].copy()
 
         # Merging is done with use of lagging previous records
         gr_copy['date_block_num'] += k
@@ -175,14 +173,16 @@ def set_categories_features(full, train_mask, category_columns):
 def n_sales(full, story_len):
     print("Calculating number of sales...")
 
-    full['revenue_std'] = full[['revenue_lag_{}'.format(i) for i in range(1, story_len + 1)]].std(axis=1).astype(
+    full['revenue_std'] = full[['revenue_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]].std(axis=1).astype(
         'float32')
-    full['target_std'] = full[['target_lag_{}'.format(i) for i in range(1, story_len + 1)]].std(axis=1).astype(
+    full['target_std'] = full[['target_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]].std(axis=1).astype(
         'float32')
 
-    full['zero_sales'] = (full[['revenue_lag_{}'.format(i) for i in range(1, story_len + 1)]] == 0).sum(axis=1).astype(
+    '''
+    full['zero_sales'] = (full[['revenue_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]] == 0).sum(axis=1).astype(
         'int32')
     full['nonzero_sales'] = (story_len - full['zero_sales']).astype('int32')
+    '''
 
     print("Number of sales added...")
 
@@ -222,17 +222,20 @@ def validation_preparation(full, train_mask, story_len, to_join, join=True):
 
     n_sales(full, story_len)
 
-    numerical_columns = ['shop_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-                            'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 8]] + [
-                            'target_lag_{}'.format(i) for i in [1, 2, 4, 8]]
+    '''
+    numerical_columns = ['shop_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
+        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
+                            'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
+                            'target_lag_{}'.format(i) for i in [1, 2, 4]]
 
     functions = {
         '_square': lambda x: x * x,
         '_sqrt': lambda x: -1 if (x < 0) else np.math.sqrt(x)
     }
 
+    
     numerical_features(full, numerical_columns, functions)
+    '''
 
     # "category_columns" consists of nominal values, so they are mostly useless for any model
     full.drop(category_columns + ['revenue', 'unique_items_sold_by_shop'] + [i + '_freq' for i in category_columns] + [
