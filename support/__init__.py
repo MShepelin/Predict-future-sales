@@ -57,7 +57,7 @@ def get_prices_means(dataset: pd.DataFrame):
     return item_mean_prices, shop_mean_prices, cat_mean_prices
 
 
-def generate_zero_sales(dataset, sample_size=512):
+def generate_zero_sales(dataset, sample_size=1500):
     print("Generating zero sales...")
 
     unique_shops = dataset['shop_id'].unique()
@@ -122,7 +122,7 @@ def lag_features(full, train_mask, story_len, lag_columns, index_columns=['date_
     print("Calculating time-based features...")
 
     # Cycle through length
-    for k in tqdm([1, 2, 3, 4, 6, 12]):
+    for k in tqdm([1, 2, 4, 6, 12]):
         gr_copy = (full[full['date_block_num'] < train_mask])[lag_columns + index_columns].copy()
 
         # Merging is done with use of lagging previous records
@@ -157,6 +157,14 @@ def set_categories_features(full, train_mask, category_columns):
         # Mean encoding join
         full = full.join(sample[category_column + '_target_mean'], on=['date_block_num', category_column])
 
+        # Count mean values
+        sample = full[full['date_block_num'] < train_mask].groupby(['date_block_num', category_column])[
+            ['revenue']].mean()
+        sample.rename(columns={'revenue': category_column + '_revenue_mean'}, inplace=True)
+
+        # Mean encoding join
+        full = full.join(sample[category_column + '_revenue_mean'], on=['date_block_num', category_column])
+
         # Frequency encoding
         sample = full[full['date_block_num'] < train_mask].groupby([
             'date_block_num', category_column]).size() / full[full['date_block_num'] < train_mask].groupby(
@@ -173,16 +181,14 @@ def set_categories_features(full, train_mask, category_columns):
 def n_sales(full, story_len):
     print("Calculating number of sales...")
 
-    full['revenue_std'] = full[['revenue_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]].std(axis=1).astype(
-        'float32')
-    full['target_std'] = full[['target_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]].std(axis=1).astype(
-        'float32')
+    full['revenue_std'] = full[['revenue_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]]].std(axis=1).astype(
+        'float16')
+    full['target_std'] = full[['target_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]]].std(axis=1).astype(
+        'float16')
 
-    '''
-    full['zero_sales'] = (full[['revenue_lag_{}'.format(i) for i in [1, 2, 3, 4, 6, 12]]] == 0).sum(axis=1).astype(
-        'int32')
-    full['nonzero_sales'] = (story_len - full['zero_sales']).astype('int32')
-    '''
+    full['zero_sales'] = (full[['revenue_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]]] == 0).sum(axis=1).astype(
+        'int8')
+    full['nonzero_sales'] = (len([1, 2, 4, 6, 12]) - full['zero_sales']).astype('int8')
 
     print("Number of sales added...")
 
@@ -218,27 +224,26 @@ def validation_preparation(full, train_mask, story_len, to_join, join=True):
 
     full = lag_features(full, train_mask, story_len,
                         lag_columns=['target', 'revenue', 'unique_items_sold_by_shop'] + [
-                            i + '_freq' for i in category_columns] + [i + '_target_mean' for i in category_columns])
+                            i + '_freq' for i in category_columns] + [i + '_target_mean' for i in category_columns] + [
+                            i + '_revenue_mean' for i in category_columns])
 
     n_sales(full, story_len)
 
-    '''
-    numerical_columns = ['shop_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
-        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
-                            'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4]] + [
-                            'target_lag_{}'.format(i) for i in [1, 2, 4]]
+    numerical_columns = ['shop_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]] + [
+        'item_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]] + [
+                            'item_category_id_freq_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]] + [
+                            'target_lag_{}'.format(i) for i in [1, 2, 4, 6, 12]]
 
     functions = {
         '_square': lambda x: x * x,
         '_sqrt': lambda x: -1 if (x < 0) else np.math.sqrt(x)
     }
-
     
     numerical_features(full, numerical_columns, functions)
-    '''
 
     # "category_columns" consists of nominal values, so they are mostly useless for any model
     full.drop(category_columns + ['revenue', 'unique_items_sold_by_shop'] + [i + '_freq' for i in category_columns] + [
-        i + '_target_mean' for i in category_columns], axis=1, inplace=True)
+            i + '_target_mean' for i in category_columns] + [i + '_revenue_mean' for i in category_columns],
+            axis=1, inplace=True)
 
     return full
